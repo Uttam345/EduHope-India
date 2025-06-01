@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { CreditCard, Calendar, Check } from 'lucide-react';
+import { CreditCard, Calendar } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
+import CryptoJS from 'crypto-js';
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -8,6 +9,11 @@ const supabase = createClient(
 );
 
 const SUGGESTED_AMOUNTS = [500, 1000, 2500, 5000];
+const PAYU_TEST_URL = 'https://test.payu.in/_payment';
+const PAYU_PROD_URL = 'https://secure.payu.in/_payment';
+const MERCHANT_KEY = '874a17eb84639a82e94cd6666b36fe5e082b1430ec8a73c08d0f96f4d5da3578';
+const MERCHANT_SALT = '51789733a4c6e5ec38800766183abf9e4b851fa8b8f5a1a2a63ea738b99c01c0';
+const IS_TEST_MODE = true;
 
 const DonationCard: React.FC = () => {
   const [amount, setAmount] = useState<number | string>('');
@@ -18,6 +24,15 @@ const DonationCard: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [step, setStep] = useState(1);
   const [error, setError] = useState<string | null>(null);
+
+  const generateTransactionId = () => {
+    return `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  };
+
+  const generateHash = (params: Record<string, string>) => {
+    const hashString = `${MERCHANT_KEY}|${params.txnid}|${params.amount}|${params.productinfo}|${params.firstname}|${params.email}|||||||||||${MERCHANT_SALT}`;
+    return CryptoJS.SHA512(hashString).toString();
+  };
 
   const handleAmountSelect = (value: number) => {
     setAmount(value);
@@ -54,38 +69,60 @@ const DonationCard: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      // Convert amount to paise (smallest currency unit)
-      const amountInPaise = Number(amount) * 100;
+      const txnId = generateTransactionId();
+      const paymentParams = {
+        key: MERCHANT_KEY,
+        txnid: txnId,
+        amount: amount.toString(),
+        productinfo: 'Donation to EduHope India',
+        firstname: name,
+        email: email,
+        phone: phone,
+        surl: `${window.location.origin}/donation/success`,
+        furl: `${window.location.origin}/donation/failure`,
+        service_provider: 'payu_paisa',
+      };
 
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-donation`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          },
-          body: JSON.stringify({
-            amount: amountInPaise,
+      const hash = generateHash(paymentParams);
+
+      // Store donation intent in database
+      const { error: dbError } = await supabase
+        .from('donations')
+        .insert([
+          {
+            transaction_id: txnId,
+            amount: Number(amount),
             name,
             email,
             phone,
-          }),
-        }
-      );
+            status: 'pending',
+          },
+        ]);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create payment session');
+      if (dbError) {
+        throw new Error('Failed to record donation');
       }
 
-      const data = await response.json();
+      // Create and submit payment form
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = IS_TEST_MODE ? PAYU_TEST_URL : PAYU_PROD_URL;
 
-      if (data.url) {
-        window.location.href = data.url;
-      } else {
-        throw new Error('Invalid response from payment server');
-      }
+      const params = {
+        ...paymentParams,
+        hash,
+      };
+
+      Object.entries(params).forEach(([key, value]) => {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = key;
+        input.value = value;
+        form.appendChild(input);
+      });
+
+      document.body.appendChild(form);
+      form.submit();
     } catch (error) {
       console.error('Payment error:', error);
       setError(

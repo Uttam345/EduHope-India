@@ -11,12 +11,14 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.7",
+    "crypto-js": "^4.2.0",
     "dotenv": "^16.5.0",
     "form-data": "^4.0.2",
     "framer-motion": "^12.12.2",
     "lucide-react": "^0.344.0",
     "mailersend": "^2.6.0",
     "mailgun.js": "^12.0.2",
+    "payu-sdk": "^2.0.0",
     "postgres": "^3.4.7",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -26,6 +28,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.9.1",
+    "@types/crypto-js": "^4.2.2",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
