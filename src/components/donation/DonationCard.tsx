@@ -54,6 +54,9 @@ const DonationCard: React.FC = () => {
     setIsSubmitting(true);
 
     try {
+      // Convert amount to paise (smallest currency unit)
+      const amountInPaise = Number(amount) * 100;
+
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-donation`,
         {
@@ -63,7 +66,7 @@ const DonationCard: React.FC = () => {
             Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
           },
           body: JSON.stringify({
-            amount: Number(amount),
+            amount: amountInPaise,
             name,
             email,
             phone,

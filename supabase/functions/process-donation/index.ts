@@ -1,104 +1,101 @@
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'npm:@supabase/supabase-js@2.39.7';
-import Stripe from 'npm:stripe@14.19.0';
-
-const stripe = new Stripe(Deno.env.get('STRIPE_SECRET_KEY') || '', {
-  apiVersion: '2023-10-16',
-});
-
-const supabase = createClient(
-  Deno.env.get('SUPABASE_URL') || '',
-  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
-);
+import { createClient } from "npm:@supabase/supabase-js@2.39.3";
+import Stripe from "npm:stripe@14.14.0";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
-serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") || "", {
+  apiVersion: "2023-10-16",
+});
+
+const supabaseClient = createClient(
+  Deno.env.get("SUPABASE_URL") || "",
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || ""
+);
+
+Deno.serve(async (req) => {
+  // Handle CORS preflight requests
+  if (req.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders,
+    });
   }
 
   try {
-    // Validate Stripe API key
-    if (!Deno.env.get('STRIPE_SECRET_KEY')) {
-      throw new Error('Stripe API key is not configured');
+    const { amount, name, email, phone } = await req.json();
+
+    if (!amount || !name || !email) {
+      throw new Error("Missing required fields");
     }
 
-    const { amount, email, name, phone } = await req.json();
-
-    // Validate required fields
-    if (!amount || !email || !name) {
-      return new Response(
-        JSON.stringify({ error: 'Missing required fields' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Validate amount
-    if (amount < 100) {
-      return new Response(
-        JSON.stringify({ error: 'Minimum donation amount is ₹100' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Get origin for success and cancel URLs
-    const origin = req.headers.get('origin');
-    if (!origin) {
-      throw new Error('Origin header is required');
-    }
-
-    try {
-      const session = await stripe.checkout.sessions.create({
-        payment_method_types: ['card'],
-        line_items: [
-          {
-            price_data: {
-              currency: 'inr',
-              product_data: {
-                name: 'Donation to EduHope India',
-                description: 'Supporting education for homeless children',
-              },
-              unit_amount: amount * 100, // Convert to paise
+    // Create a Stripe Checkout Session
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price_data: {
+            currency: "inr",
+            product_data: {
+              name: "Donation",
             },
-            quantity: 1,
+            unit_amount: amount, // amount in paise
           },
-        ],
-        mode: 'payment',
-        success_url: `${origin}/donation/success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${origin}/donation/cancel`,
-        customer_email: email,
-        metadata: {
-          donor_name: name,
-          donor_phone: phone || '',
+          quantity: 1,
         },
-      });
+      ],
+      customer_email: email,
+      mode: "payment",
+      success_url: `${req.headers.get("origin")}/donation-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${req.headers.get("origin")}/donate`,
+      metadata: {
+        name,
+        phone: phone || "",
+      },
+    });
 
-      if (!session?.url) {
-        throw new Error('Failed to create Stripe session URL');
-      }
+    // Store donation intent in database
+    const { error: dbError } = await supabaseClient
+      .from("donations")
+      .insert([
+        {
+          amount,
+          name,
+          email,
+          phone,
+          session_id: session.id,
+          status: "pending",
+        },
+      ]);
 
-      return new Response(
-        JSON.stringify({ sessionId: session.id, url: session.url }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    } catch (stripeError) {
-      console.error('Stripe session creation error:', stripeError);
-      throw new Error('Failed to create payment session: ' + stripeError.message);
+    if (dbError) {
+      console.error("Database error:", dbError);
+      throw new Error("Failed to record donation");
     }
-  } catch (error) {
-    console.error('Process donation error:', error);
+
     return new Response(
-      JSON.stringify({ 
-        error: error instanceof Error ? error.message : 'An unexpected error occurred'
-      }),
-      { 
-        status: 500, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      JSON.stringify({ url: session.url }),
+      {
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json",
+        },
+        status: 200,
+      }
+    );
+  } catch (error) {
+    console.error("Error processing donation:", error);
+    return new Response(
+      JSON.stringify({ error: error.message || "Failed to process donation" }),
+      {
+        headers: {
+          ...corsHeaders,
+          "Content-Type": "application/json",
+        },
+        status: 400,
       }
     );
   }
